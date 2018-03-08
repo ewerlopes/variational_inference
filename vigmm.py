@@ -161,13 +161,12 @@ def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
     converged = False
     while not done:
         # E step
-        z, rnk, ll, logrnk, _ = mixGaussBayesInfer(model, X) # TODO
-        Nk, xbar, S = computeEss(X, rnk) # TODO
+        z, rnk, ll, logrnk, _ = mixGaussBayesInfer(model, X)
+        Nk, xbar, S = computeEss(X, rnk)
         loglikHist.append(lowerBound(model,  Nk, xbar, S, rnk, logrnk, iter_num)) # TODO
 
         # M step
         model['postParams'] = Mstep(Nk, xbar, S, model['priorParams'])
-
 
         p = model['postParams']
         if plotFn:
@@ -252,6 +251,22 @@ def wishartExpectedLogDet(W, v, logdetW): # Bishop's B.81
     if logdetW is None:
         logdetW = logdet(W)
     return sum(digamma(1/2*(v + 1 - np.arange(1,d+1)))) + d*log(2)  + logdetW
+
+
+def computeEss(X, weights):
+    # weights(n,k)
+    K = weights.shape[1]
+    d = X.shape[1]
+    Nk = np.sum(weights, axis=0) # 10.51
+    Nk = Nk + 1e-10
+    SSxbar = np.zeros((K,d))
+    SSXX = np.zeros((d,d,K))
+
+    for k in range(K):    #the .reshape(-1,1) makes the vector a col-vector.
+        SSxbar[k,:] = np.sum(X * weights[:,k].reshape(-1,1), axis=0) / Nk[k] # 10.52
+        XC = X - SSxbar[k,:]
+        SSXX[:,:,k] = (XC * weights[:,k].reshape(-1,1)).transpose().dot(XC) / Nk[k] # 10.53
+    return (Nk, SSxbar, SSXX)
 
 
 def mixGaussBayesInfer(model, X):
