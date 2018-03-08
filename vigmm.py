@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 from mathematics import *
 from sklearn.mixture import GaussianMixture
 from scipy.special import logsumexp
+from optimization import convergenceTest
 
 def read_csv(filename='oldFaith.txt'):
     f = open(filename, 'r')
@@ -159,7 +160,7 @@ def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
     model['postParams'] = Mstep(Nk, xbar, S, model['priorParams'])
 
     ### -- Main loop -- ###
-    iter_num = 1
+    iter_num = 0
     done = False
     loglikHist = []
     converged = False
@@ -177,7 +178,7 @@ def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
             plotFn(X, p.alpha, p.m, p.W, p.v, loglikHist[iter_num], iter_num) # TODO
 
         # Converged?
-        if iter_num == 1:
+        if iter_num == 0:
             converged = False
         else:
             converged = convergenceTest(loglikHist[iter_num], loglikHist[iter_num-1], thresh) # TODO
@@ -406,7 +407,6 @@ def lowerBound(model,  Nk, xbar, S, rnk, logrnk, iter):
              Elogqpi: {}\nElogqmuSigma: {}\n".format(ElogpX, ElogpZ,
              Elogppi, ElogpmuSigma, ElogqZ, Elogqpi, ElogqmuSigma)
     return L
-    
 
 def run_vbem(K=6):
     ## Load Data
@@ -418,6 +418,8 @@ def run_vbem(K=6):
 
     ## Run mixGaussBayesFit
     model, loglikHist = mixGaussBayesFit(data,K)
+
+    print loglikHist
 
     ## Plot
     # figure()
