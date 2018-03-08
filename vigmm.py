@@ -110,7 +110,7 @@ class mixGaussBayesStructure:
 
 
 def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
-                    alpha0= 0.001, plotFn=True):
+                    alpha0= 0.001, plotFn=False):
 
     N, D = X.shape
 
@@ -147,8 +147,12 @@ def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
                         init_params='kmeans', tol=0.1, random_state=1)
     clf.fit(X)
     xbar = clf.means_       # centres
-    S = clf.covariances_
     Nk = N*clf.weights_     # priors
+
+    S = np.zeros((D,D,K))   # covariances
+    for k in range(clf.covariances_.shape[0]): # reshape it
+        S[:,:,k] = clf.covariances_[k]
+
 
     np.set_printoptions(precision=3, suppress=True)
 
@@ -163,7 +167,7 @@ def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
         # E step
         z, rnk, ll, logrnk, _ = mixGaussBayesInfer(model, X)
         Nk, xbar, S = computeEss(X, rnk)
-        loglikHist.append(lowerBound(model,  Nk, xbar, S, rnk, logrnk, iter_num)) # TODO
+        loglikHist.append(lowerBound(model,  Nk, xbar, S, rnk, logrnk, iter_num))
 
         # M step
         model['postParams'] = Mstep(Nk, xbar, S, model['priorParams'])
@@ -219,7 +223,7 @@ def Mstep(Nk, xbar, S, priorParams):
         else:
             m[k,:] = (beta0[:,k] * m0[k,:] + Nk[k] * xbar[k]) / beta[:,k] # 10.61
 
-            invW[:,:,k] = invW0[:,:,k] + Nk[k] * S[k] + \
+            invW[:,:,k] = invW0[:,:,k] + Nk[k] * S[:,:,k] + \
                           (beta0[:,k]* Nk[k] / (beta0[:,k] + Nk[k])) * \
                           (xbar[k] - m0[k,:]).transpose().dot(xbar[k] - m0[k,:]) # 10.62
 
@@ -310,6 +314,99 @@ def mixGaussBayesInfer(model, X):
     return (z, r, logSumRho, logr, Nk)
 
 
+def lowerBound(model,  Nk, xbar, S, rnk, logrnk, iter):
+    # Bishop's book section 10.2.2
+
+    ## copying postParams
+    alpha = model['postParams'].alpha
+    beta = model['postParams'].beta
+    entropy = model['postParams'].entropy
+    invW = model['postParams'].invW
+    logDirConst = model['postParams'].logDirConst
+    logLambdaTilde = model['postParams'].logLambdaTilde
+    logPiTilde = model['postParams'].logPiTilde
+    logWishartConst = model['postParams'].logWishartConst
+    m = model['postParams'].m
+    v = model['postParams'].v
+    W = model['postParams'].W
+
+    ## copying priorParams
+    alpha0 = model['priorParams'].alpha
+    beta0 = model['priorParams'].beta
+    entropy0 = model['priorParams'].entropy
+    invW0 = model['priorParams'].invW
+    logDirConst0 = model['priorParams'].logDirConst
+    logLambdaTilde0 = model['priorParams'].logLambdaTilde
+    logPiTilde0 = model['priorParams'].logPiTilde
+    logWishartConst0 = model['priorParams'].logWishartConst
+    m0 = model['priorParams'].m
+    v0 = model['priorParams'].v
+    W0 = model['priorParams'].W
+
+    D, D2, K = W.shape
+
+    # 10.71
+    ElogpX = np.zeros((1,K))
+
+    for k in range(K):
+        xbarc = xbar[k,:] - m[k,:]
+
+        # the reshape maintains the 1x2 for after the multiplications
+        ElogpX[:,k] = 0.5 * Nk[k]                                     \
+                      * (logLambdaTilde[:,k] - D/beta[:,k]            \
+                      - np.trace((v[:,k]*S[:,:,k]).dot(W[:,:,k]))     \
+                      - v[:,k] * np.sum((xbarc.dot(W[:,:,k]) * xbarc)
+                                         .reshape((1,-1)), axis=1)    \
+                      - D * np.log(2*np.pi)) # 10.71
+
+    ElogpX = np.sum(ElogpX)
+
+    #10.72
+    ElogpZ = np.sum(Nk * logPiTilde)
+
+    # 10.73
+    Elogppi = logDirConst0 + np.sum((alpha0-1)*logPiTilde)
+
+    #10.74
+    ElogpmuSigma = np.zeros((1,K))
+    for k in range(K):
+        mc = m[k,:] - m0[k,:]
+        #logB0(k) = (v0(k)/2)*logdet(invW0(:,:,k)) - (v0(k)*D/2)*log(2) ...
+        #        - (D*(D-1)/4)*log(pi) - sum(gammaln(0.5*(v0(k)+1 -[1:D])))
+
+        ElogpmuSigma[:,k] = 0.5*(D*np.log(beta0[:,k]/(2*np.pi))                         \
+                               + logLambdaTilde[:,k] - D*beta0[:,k]/beta[:,k]         \
+                               - beta0[:,k]*v[:,k]*np.sum((mc.dot(W[:,:,k]) * mc)
+                                                           .reshape((1,-1)), axis=1))  \
+                               + logWishartConst0[:,k]                                \
+                          + 0.5*(v0[:,k] - D - 1)*logLambdaTilde[:,k]                 \
+                          - 0.5*v[:,k]*np.trace(invW0[:,:,k].dot(W[:,:,k]))
+
+    ElogpmuSigma = np.sum(ElogpmuSigma)
+
+    # Entropy terms
+    #10.75
+    #ElogqZ = sum(sum(rnk.*log(rnk)))
+    ElogqZ = np.sum(np.sum(rnk*logrnk,axis=1))
+
+    #10.76
+    Elogqpi = np.sum((alpha - 1) * logPiTilde) + logDirConst
+
+    #10.77
+    #TODO verify whether there's a diff between / and ./ in MATLAB
+    ElogqmuSigma = np.sum(1/2*logLambdaTilde + D/2*np.log(beta /(2*np.pi)) - D/2 - entropy)
+
+    # Overall sum
+    # 10.70
+    L = ElogpX + ElogpZ + Elogppi + ElogpmuSigma - ElogqZ - Elogqpi - ElogqmuSigma
+
+    if np.isnan(L):
+      print "ElogpX: {}\nElogpZ: {}\nElogppi: {}\n\
+             ElogpmuSigma: {}\nElogqZ: {}\n\
+             Elogqpi: {}\nElogqmuSigma: {}\n".format(ElogpX, ElogpZ,
+             Elogppi, ElogpmuSigma, ElogqZ, Elogqpi, ElogqmuSigma)
+    return L
+    
 
 def run_vbem(K=6):
     ## Load Data
@@ -328,6 +425,8 @@ def run_vbem(K=6):
     # xlabel('iter')
     # ylabel('lower bound on log marginal likelihood')
     # title('variational Bayes objective for GMM on old faithful data')
+
+
 
 if __name__ == '__main__':
     run_vbem()
