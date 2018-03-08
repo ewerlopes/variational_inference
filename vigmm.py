@@ -109,7 +109,7 @@ class mixGaussBayesStructure:
 
 
 def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
-                    alpha0= 0.001):
+                    alpha0= 0.001, plotFn=True):
 
     N, D = X.shape
 
@@ -152,7 +152,41 @@ def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
     np.set_printoptions(precision=3, suppress=True)
 
     model['postParams'] = Mstep(Nk, xbar, S, model['priorParams'])
-    return [[],[]]
+
+    ### -- Main loop -- ###
+    iter_num = 1
+    done = False
+    loglikHist = []
+    converged = False
+    while not done:
+        # E step
+        z, rnk, ll, logrnk = mixGaussBayesInfer(model, X) # TODO
+        Nk, xbar, S = computeEss(X, rnk) # TODO
+        loglikHist.append(lowerBound(model,  Nk, xbar, S, rnk, logrnk, iter_num)) # TODO
+
+        # M step
+        model['postParams'] = Mstep(Nk, xbar, S, model['priorParams'])
+
+
+        p = model['postParams']
+        if plotFn:
+            plotFn(X, p.alpha, p.m, p.W, p.v, loglikHist[iter_num], iter_num) # TODO
+
+        # Converged?
+        if iter_num == 1:
+            converged = False
+        else:
+            converged = convergenceTest(loglikHist[iter_num], loglikHist[iter_num-1], thresh) # TODO
+
+        done = converged or (iter_num > maxIter)
+
+        if verbose:
+            print 'Iteration #{}, loglik = {:.2}}'.format(iter_num, loglikHist[iter_num])
+
+        iter_num +=1
+
+    return model, loglikHist
+
 
 def Mstep(Nk, xbar, S, priorParams):
 
@@ -185,17 +219,77 @@ def Mstep(Nk, xbar, S, priorParams):
         else:
             m[k,:] = (beta0[:,k] * m0[k,:] + Nk[k] * xbar[k]) / beta[:,k] # 10.61
 
-            invW[:,:,k] = invW0[:,:,k] + Nk[k]*S[k] + \
+            invW[:,:,k] = invW0[:,:,k] + Nk[k] * S[k] + \
                           (beta0[:,k]* Nk[k] / (beta0[:,k] + Nk[k])) * \
-                          (xbar[k] - m0[k,:]).T * (xbar[k] - m0[k,:]) # 10.62
+                          (xbar[k] - m0[k,:]).transpose().dot(xbar[k] - m0[k,:]) # 10.62
 
             #W[:,:,k] = np.linalg.inv(invW[:,:,k])
             if np.isnan(np.sum(invW[:,:,k])):
                 print 'inverse W has NaN'
             v[:,k] = v0[:,k] + Nk[k] # 10.63
 
-    print 'Out of MStep'
     return  mixGaussBayesStructure(alpha, beta, m, v, np.array([]), invW)
+
+
+def wishartLogConst(W, v, logdetW=None): # Bishop's B.79
+    d = W.shape[0]
+    if logdetW is None:
+        logdetW = logdet(W)
+    return -(v/2)*logdetW -(v*d/2)*log(2) - mvtGammaln(d,v/2)
+
+
+def wishartEntropy(W, v, logdetW=None): # Bishop's  B.82
+    d = W.shape[0]
+    if logdetW is None:
+      logdetW = logdet(W)
+    return - wishartLogConst(W, v, logdetW)       \
+           - (v-d-1)/2*wishartExpectedLogDet(W, v, logdetW) + v*d/2
+
+
+def wishartExpectedLogDet(W, v, logdetW): # Bishop's B.81
+    d = W.shape[0]
+    if logdetW is None:
+        logdetW = logdet(W)
+    return sum(digamma(1/2*(v + 1 - np.arange(1,d+1)))) + d*log(2)  + logdetW
+
+
+def mixGaussBayesInfer(model, X):
+    '''
+    z(i) = argmax_k p(z=k|X(i,:), model) hard clustering
+    pz(i,k) = p(z=k|X(i,:), model) soft responsibility
+    ll(i) = log p(X(i,:) | model)  logprob of observed data
+
+    Calculate responsibilities using Bishop's equation 10.67
+
+    Returns: [z, r, logSumRho, logr, Nk]
+
+    '''
+
+[alpha, beta, entropy, invW, logDirConst, logLambdaTilde, logPiTilde,  ...
+    logWishartConst, m, v, W] = ...
+  structvals(model.postParams, 'alpha', 'beta', 'entropy', 'invW', ...
+  'logDirConst', 'logLambdaTilde', 'logPiTilde', 'logWishartConst',...
+  'm', 'v', 'W');
+
+K = model.K;
+[N,D] = size(X);
+
+E = zeros(N,K);
+for k = 1:K
+  XC = bsxfun(@minus, X, m(k,:));
+  E(:,k) = D/(beta(k)) + v(k)*sum((XC*W(:,:,k)).*XC,2); # 10.64
+end
+
+logRho = repmat(logPiTilde + 0.5*logLambdaTilde, N,1) - 0.5*E;
+logSumRho = logsumexp(logRho,2);
+logr = logRho - repmat(logSumRho, 1,K);
+r = exp(logr);
+Nk = exp(logsumexp(logr,1));
+z = maxidx(logr, [], 2);
+
+end
+
+
 
 def run_vbem(K=6):
     ## Load Data

@@ -44,4 +44,4 @@ def mvtGammaln(n, alpha):
 
     See Muirhead pp 61-62.
     '''
-    return ((n*(n-1))/4)*np.log(np.pi)+np.sum(gammaln(alpha+0.5*(1-np.arange(1,n+1))))
+    return ((n*(n-1))/4) * np.log(np.pi) + np.sum(gammaln(alpha+0.5*(1-np.arange(1,n+1))))
