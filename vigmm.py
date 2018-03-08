@@ -4,18 +4,8 @@ from matplotlib import pyplot as plt
 from mathematics import *
 from sklearn.mixture import GaussianMixture
 from scipy.special import logsumexp
-from optimization import convergenceTest
-
-def read_csv(filename='oldFaith.txt'):
-    f = open(filename, 'r')
-    data = []
-    for line in f.readlines():
-        line = line.strip().split(' ')
-        data.append(tuple([float(line[0]),int(line[1])]))
-    return data
-
-def normalize_data(X):
-    return (np.array(X) - np.mean(X)) / np.var(X)
+from optimization import convergence_test
+from utils import read_csv, normalize_data
 
 def plotData(X,Y,normalize=False):
     fig = plt.figure(figsize=(4,2))
@@ -110,7 +100,7 @@ class mixGaussBayesStructure:
             #params.logWishartConst(k) = wishartLogConst(params.W(:,:,k), v(k), logdetW(k))
 
 
-def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
+def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=True,
                     alpha0= 0.001, plotFn=False):
 
     N, D = X.shape
@@ -181,12 +171,12 @@ def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
         if iter_num == 0:
             converged = False
         else:
-            converged = convergenceTest(loglikHist[iter_num], loglikHist[iter_num-1], thresh) # TODO
+            converged = convergence_test(loglikHist[iter_num], loglikHist[iter_num-1], thresh) # TODO
 
         done = converged or (iter_num > maxIter)
 
         if verbose:
-            print 'Iteration #{}, loglik = {:.2}}'.format(iter_num, loglikHist[iter_num])
+            print 'Iteration #{}, loglik = {:.2}'.format(iter_num, loglikHist[iter_num])
 
         iter_num +=1
 
@@ -234,28 +224,6 @@ def Mstep(Nk, xbar, S, priorParams):
             v[:,k] = v0[:,k] + Nk[k] # 10.63
 
     return  mixGaussBayesStructure(alpha, beta, m, v, np.array([]), invW)
-
-
-def wishartLogConst(W, v, logdetW=None): # Bishop's B.79
-    d = W.shape[0]
-    if logdetW is None:
-        logdetW = logdet(W)
-    return -(v/2)*logdetW -(v*d/2)*log(2) - mvtGammaln(d,v/2)
-
-
-def wishartEntropy(W, v, logdetW=None): # Bishop's  B.82
-    d = W.shape[0]
-    if logdetW is None:
-      logdetW = logdet(W)
-    return - wishartLogConst(W, v, logdetW)       \
-           - (v-d-1)/2*wishartExpectedLogDet(W, v, logdetW) + v*d/2
-
-
-def wishartExpectedLogDet(W, v, logdetW): # Bishop's B.81
-    d = W.shape[0]
-    if logdetW is None:
-        logdetW = logdet(W)
-    return sum(digamma(1/2*(v + 1 - np.arange(1,d+1)))) + d*log(2)  + logdetW
 
 
 def computeEss(X, weights):
@@ -408,7 +376,7 @@ def lowerBound(model,  Nk, xbar, S, rnk, logrnk, iter):
              Elogppi, ElogpmuSigma, ElogqZ, Elogqpi, ElogqmuSigma)
     return L
 
-def run_vbem(K=6):
+def main(K=6):
     ## Load Data
     np.random.seed(0)
     data = read_csv()
@@ -419,16 +387,13 @@ def run_vbem(K=6):
     ## Run mixGaussBayesFit
     model, loglikHist = mixGaussBayesFit(data,K)
 
-    print loglikHist
-
-    ## Plot
-    # figure()
-    # plot(loglikHist, 'o-', 'linewidth', 3)
-    # xlabel('iter')
-    # ylabel('lower bound on log marginal likelihood')
-    # title('variational Bayes objective for GMM on old faithful data')
+    plt.plot(loglikHist, '-.', lw=3)
+    plt.xlabel('iter')
+    plt.ylabel('lower bound on log marginal likelihood')
+    plt.title('variational Bayes objective for GMM on old faithful data')
+    plt.show()
 
 
 
 if __name__ == '__main__':
-    run_vbem()
+    main()

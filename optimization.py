@@ -1,6 +1,7 @@
+from __future__ import division
 import numpy as np
 
-def convergenceTest(fval, previous_fval, threshold=1e-4, warn=False):
+def convergence_test(fval, previous_fval, threshold=1e-4, verbose=True):
     '''
     Check if an objective function has converged
 
@@ -12,12 +13,12 @@ def convergenceTest(fval, previous_fval, threshold=1e-4, warn=False):
     '''
 
     converged = False
-    delta_fval = abs(fval - previous_fval)
-    avg_fval = (abs(fval) + abs(previous_fval) + np.spacing(1))/2
+    delta_fval = np.abs(fval - previous_fval)
+    avg_fval = (np.abs(fval) + np.abs(previous_fval) + np.spacing(1))/2
     if (delta_fval / avg_fval) < threshold:
         converged = True
 
-    if warn and (fval-previous_fval) < -2*np.spacing(1): #fval < previous_fval
-        print('ConvergenceTest: objective decreased!')
+    if verbose and (fval-previous_fval) < -2*np.spacing(1): #fval < previous_fval
+        print('convergence_test: objective decreased!')
 
     return converged
