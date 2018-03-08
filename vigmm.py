@@ -3,6 +3,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from mathematics import *
 from sklearn.mixture import GaussianMixture
+from scipy.special import logsumexp
 
 def read_csv(filename='oldFaith.txt'):
     f = open(filename, 'r')
@@ -160,7 +161,7 @@ def mixGaussBayesFit(X, K, maxIter=200, thresh=1e-5, verbose=False,
     converged = False
     while not done:
         # E step
-        z, rnk, ll, logrnk = mixGaussBayesInfer(model, X) # TODO
+        z, rnk, ll, logrnk, _ = mixGaussBayesInfer(model, X) # TODO
         Nk, xbar, S = computeEss(X, rnk) # TODO
         loglikHist.append(lowerBound(model,  Nk, xbar, S, rnk, logrnk, iter_num)) # TODO
 
@@ -260,34 +261,38 @@ def mixGaussBayesInfer(model, X):
     ll(i) = log p(X(i,:) | model)  logprob of observed data
 
     Calculate responsibilities using Bishop's equation 10.67
-
-    Returns: [z, r, logSumRho, logr, Nk]
-
     '''
 
-[alpha, beta, entropy, invW, logDirConst, logLambdaTilde, logPiTilde,  ...
-    logWishartConst, m, v, W] = ...
-  structvals(model.postParams, 'alpha', 'beta', 'entropy', 'invW', ...
-  'logDirConst', 'logLambdaTilde', 'logPiTilde', 'logWishartConst',...
-  'm', 'v', 'W');
+    # copying parameters
+    alpha = model['postParams'].alpha
+    beta = model['postParams'].beta
+    entropy = model['postParams'].entropy
+    invW = model['postParams'].invW
+    logDirConst = model['postParams'].logDirConst
+    logLambdaTilde = model['postParams'].logLambdaTilde
+    logPiTilde = model['postParams'].logPiTilde
+    logWishartConst = model['postParams'].logWishartConst
+    m = model['postParams'].m
+    v = model['postParams'].v
+    W = model['postParams'].W
 
-K = model.K;
-[N,D] = size(X);
+    K = model['K']
+    N, D = X.shape
 
-E = zeros(N,K);
-for k = 1:K
-  XC = bsxfun(@minus, X, m(k,:));
-  E(:,k) = D/(beta(k)) + v(k)*sum((XC*W(:,:,k)).*XC,2); # 10.64
-end
+    E = np.zeros((N,K))
 
-logRho = repmat(logPiTilde + 0.5*logLambdaTilde, N,1) - 0.5*E;
-logSumRho = logsumexp(logRho,2);
-logr = logRho - repmat(logSumRho, 1,K);
-r = exp(logr);
-Nk = exp(logsumexp(logr,1));
-z = maxidx(logr, [], 2);
+    for k in range(K):
+        XC = X - m[k,:]     # subtract mean
+        E[:,k]  = D / (beta[:,k]) + v[:,k] * np.sum(XC.dot(W[:,:,k]) * XC, axis=1) # Bishop's 10.64. The sum is a row-wise sum.
 
-end
+    logRho = np.tile(logPiTilde + 0.5*logLambdaTilde,(N, 1)) - 0.5 * E
+    logSumRho = logsumexp(logRho,axis=1).reshape((-1, 1))   # the reshape make the result a col-vector
+    logr = logRho - np.tile(logSumRho,(1,K))
+    r = np.exp(logr)
+    Nk = np.exp(logsumexp(logr, axis=0))
+    z = logr.max(1) # max element of each row
+
+    return (z, r, logSumRho, logr, Nk)
 
 
 
