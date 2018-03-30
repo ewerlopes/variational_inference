@@ -66,19 +66,19 @@ class MixGaussBayesStructure:
             logdetW[:, k] = logdet(self.W[:, :, k])
 
             # Calculates Bishop's B.81 equation: E[ln|Lambda|]
-            self.logLambdaTilde[:, k] = np.sum(digamma(1/2*(v[:, k] + 1 - np.arange(1, D+1)))) + \
+            self.logLambdaTilde[:, k] = np.sum(digamma(1/2*(v[:, [k]] + 1 - np.arange(1, D+1)))) + \
                                         (D * np.log(2)) + logdetW[:, k]
 
-            logB = -(v[:,k] / 2) * logdetW[:, k] - (v[:, k] * D/2) * np.log(2)      \
-                      - (D*(D-1)/4) * np.log(np.pi) - np.sum(gammaln(0.5*(v[:, k] + 1 - np.arange(1, D+1))))
+            logB = -(v[:,k] / 2) * logdetW[:, k] - (v[:, [k]] * D/2) * np.log(2)      \
+                      - (D*(D-1)/4) * np.log(np.pi) - np.sum(gammaln(0.5*(v[:, [k]] + 1 - np.arange(1, D+1))))
 
             # Calculates Bishop's B.79 equation: B(W, v)
-            self.logWishartConst[:, k] = -(v[:, k]/2) * logdetW[:, k] - (v[:, k]*D/2)*np.log(2) - mvtGammaln(D, v[:, k]/2)
+            self.logWishartConst[:, k] = -(v[:, [k]]/2) * logdetW[:, k] - (v[:, [k]]*D/2)*np.log(2) - mvtGammaln(D, v[:, [k]]/2)
 
             assert(np.isclose(logB[0], self.logWishartConst[0, k], rtol=0, atol=1e-2))
 
             # Calculates Bishop's B.82 equation: H[Lambda]
-            self.entropy[:, k] = - self.logWishartConst[:, k] - ((v[:, k]-D-1)/2)*self.logLambdaTilde[:, k] + v[:, k]*D/2
+            self.entropy[:, k] = - self.logWishartConst[:, k] - ((v[:, [k]]-D-1)/2)*self.logLambdaTilde[:, k] + v[:, [k]]*D/2
 
     def print_params(self):
         # copying parameters
@@ -232,7 +232,7 @@ def m_step(Nk, xbar, S, priorParams):
         if Nk[k] < 0.001:    # extinguished
             m[k, :] = m0[k, :]
             invW[:, :, k] = invW0[:, :, k]
-            v[:, k] = v0[:, k]
+            v[:, [k]] = v0[:, k]
         else:
             m[k, :] = (beta0[:, k] * m0[k, :] + Nk[k] * xbar[k]) / beta[:, [k]]    # Bishop's 10.61
 
@@ -243,7 +243,7 @@ def m_step(Nk, xbar, S, priorParams):
             if np.isnan(np.sum(invW[:, :, k])):
                 print 'inverse W has NaN'
 
-            v[:, k] = v0[:, k] + Nk[k]    # Bishop's 10.63
+            v[:, [k]] = v0[:, k] + Nk[k]    # Bishop's 10.63
 
     return MixGaussBayesStructure(alpha, beta, m, v, np.array([]), invW)
 
@@ -388,8 +388,8 @@ def lower_bound(model,  Nk, xbar, S, rnk, logrnk, iter_num):
         # the reshape maintains the 1x2 for after the multiplications
         ElogpX[:, k] = 0.5 * Nk[k]                                     \
                       * (logLambdaTilde[:, k] - (D/beta[:, [k]])
-                         - np.trace(v[:, k] * S[:, :, k].dot(W[:, :, k]))
-                         - v[:, k] * np.sum(xbarc.dot(W[:, :, k]) * xbarc, keepdims=True)
+                         - np.trace(v[:, [k]] * S[:, :, k].dot(W[:, :, k]))
+                         - v[:, [k]] * np.sum(xbarc.dot(W[:, :, k]) * xbarc, keepdims=True)
                          - (D * np.log(2*np.pi)))    # Bishop's equation 10.71
     ElogpX = np.sum(ElogpX)
 
@@ -406,10 +406,10 @@ def lower_bound(model,  Nk, xbar, S, rnk, logrnk, iter_num):
 
         ElogpmuSigma[:, k] = 0.5 * (D * np.log(beta0[:, k]/(2*np.pi))
                                + logLambdaTilde[:, k] - ((D*beta0[:, k])/beta[:, [k]])
-                               - beta0[:, k]*v[:, k]*np.sum(mc.dot(W[:, :, k]) * mc, keepdims=True)) \
+                               - beta0[:, k]*v[:, [k]]*np.sum(mc.dot(W[:, :, k]) * mc, keepdims=True)) \
                                + logWishartConst0[:, k]                                \
                                + 0.5 * (v0[:, k] - D - 1) * logLambdaTilde[:, k]                 \
-                               - 0.5 * v[:, k] * np.trace(invW0[:, :, k].dot(W[:, :, k]))
+                               - 0.5 * v[:, [k]] * np.trace(invW0[:, :, k].dot(W[:, :, k]))
 
     ElogpmuSigma = np.sum(ElogpmuSigma)
 
@@ -462,7 +462,6 @@ def main(K=6):
     plt.ylabel('lower bound on log marginal likelihood')
     plt.title('variational Bayes objective for GMM on old faithful data')
     plt.show()
-
 
 if __name__ == '__main__':
     main()
