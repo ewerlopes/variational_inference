@@ -18,25 +18,25 @@ __email__ = "ewerton.lopes@polimi.it"
 __status__ = "Production"
 
 
-class Parameters:
+class BaseParameters:
     """
     Holds the parameters for the VBGMM.
     """
 
     def __init__(self, alpha, beta, mean, dof, s_mtx, inv_s_mtx):
         if not inv_s_mtx.size:
-            D, D2, K = s_mtx.shape
+            self.D, self.D2, self.K = s_mtx.shape
         else:
-            D, D2, K = inv_s_mtx.shape
+            self.D, self.D2, self.K = inv_s_mtx.shape
 
-        self.alpha = alpha          # Dirichlet vector parameter (scalar in case of symmetric prior)
-        self.beta = beta            # precision (Bishop's 'beta' parameter)
-        self.mean = mean            # mean (Bishop's 'm' parameter)
-        self.dof = dof              # Wishart 'degrees of freedom' (Bishop's 'v' parameter)
-        self.s_mtx = np.zeros((D, D, K))      # Wishart Scale matrix (Bishop's 'W' parameter)
-        self.inv_s_mtx = np.zeros((D, D, K))  # Wishart 'degrees of freedom' (Bishop's 'invW' parameter)
+        self.alpha = alpha  # Dirichlet vector parameter (scalar in case of symmetric prior)
+        self.beta = beta  # precision (Bishop's 'beta' parameter)
+        self.mean = mean  # mean (Bishop's 'm' parameter)
+        self.dof = dof  # Wishart 'degrees of freedom' (Bishop's 'v' parameter)
+        self.s_mtx = np.zeros((self.D, self.D, self.K))  # Wishart Scale matrix (Bishop's 'W' parameter)
+        self.inv_s_mtx = np.zeros((self.D, self.D, self.K))  # Wishart 'degrees of freedom' (Bishop's 'invW' parameter)
 
-        for k in range(K):
+        for k in range(self.K):
             if not inv_s_mtx.size:  # in case inv_s_mtx is empty
                 self.s_mtx[:, :, k] = copy.deepcopy(s_mtx[:, :, k])
                 self.inv_s_mtx[:, :, k] = np.linalg.inv(s_mtx[:, :, k])
@@ -45,29 +45,81 @@ class Parameters:
                 self.inv_s_mtx[:, :, k] = copy.deepcopy(inv_s_mtx[:, :, k])
                 self.s_mtx[:, :, k] = np.linalg.inv(inv_s_mtx[:, :, k])
 
-    def print_params(self):
-        """Print all parameters"""
 
+class Estimate(BaseParameters):
+
+    def __init__(self, alpha, beta, mean, dof, s_mtx, inv_s_mtx):
+        BaseParameters.__init__(self,alpha, beta, mean, dof, s_mtx, inv_s_mtx)
+        self.log_pi_tilde = None  # Bishop's equation 10.66 : E[ln(pi_k)]
+        self.log_lambda_tilde = None  # Bishop's equation 10.65/B.81 : E[ln|Lambda_k|]
+        self.exp_mu_lambda = None  # Bishop's equation 10.64
+        self.log_wishart_const = None
+        self.log_dirichlet_const = None
+        self.entropy = None
+
+    def get_log_wishart_const(self):
+        # constants
+        log_wishart_const = np.zeros((1, self.K))
+
+        for k in range(self.K):
+            log_det_s_mtx = logdet(self.s_mtx[:, :, k])
+
+            log_B = -(self.dof[:, k] / 2) * log_det_s_mtx - (self.dof[:, [k]] * self.D / 2) * np.log(2) \
+                    - (self.D * (self.D - 1) / 4) * np.log(np.pi) - \
+                    np.sum(gammaln(0.5 * (self.dof[:, [k]] + 1 - np.arange(1, self.D + 1))))
+
+            # Calculates Bishop's B.79 equation: B(W, v)
+            log_wishart_const[:, k] = -(self.dof[:, [k]] / 2) * log_det_s_mtx - \
+                                      (self.dof[:, [k]] * self.D / 2) * np.log(2) - \
+                                      mvtGammaln(self.D, self.dof[:, [k]] / 2)
+
+            assert (np.isclose(log_B, log_wishart_const[:, k], rtol=0, atol=1e-2))
+        return log_wishart_const
+
+    def get_log_dir_const(self):
+        # Bishop's equation B.23
+        return gammaln(np.sum(self.alpha)) - np.sum(gammaln(self.alpha))
+
+    def get_expectations(self, data):
+        N, D = data.shape
+
+        self.exp_mu_lambda = np.zeros((N, self.K))
+        for k in range(self.K):
+            x_c = data - self.mean[[k], :]  # subtract mean
+            self.exp_mu_lambda[:, [k]] = (D / self.beta[:, [k]]) + self.dof[:, [k]] * \
+                                         np.sum(x_c.dot(self.s_mtx[:, :, k]) * x_c, axis=1, keepdims=True)
+
+        self.log_lambda_tilde = np.zeros((1, self.K))
+        for k in range(self.K):
+            log_det_s_mtx = logdet(self.s_mtx[:, :, k])
+            # Calculates Bishop's B.81 equation:
+            self.log_lambda_tilde[:, k] = np.sum(digamma(1 / 2 * (self.dof[:, [k]] + 1 - np.arange(1, D + 1)))) \
+                                          + (D * np.log(2)) + log_det_s_mtx
+
+        self.log_pi_tilde = digamma(self.alpha) - digamma(np.sum(self.alpha))
+
+        return self.exp_mu_lambda, self.log_lambda_tilde, self.log_pi_tilde
+
+    def __str__(self):
+        """Print all parameters"""
         print 'Alpha=\n{}'.format(self.alpha)
         print 'Beta=\n{}'.format(self.beta)
         print 'Entropy=\n{}'.format(self.entropy)
-        print 'Wishart Inverse Scale Matrix=\n{}'.format(self.invW[:, :, 0])
-        print 'Log of Dirichlet constant=\n{}'.format(self.logDirConst)
-        print 'Log of LambdaTilde=\n{}'.format(self.logLambdaTilde)
-        print 'Log of PiTilde=\n{}'.format(self.logPiTilde)
-        print 'Log of Wishart constant=\n{}'.format(self.logWishartConst)
-        print 'Mean=\n{}'.format(self.m)
-        print 'Wishart DOF={}'.format(self.v)
+        print 'Wishart Inverse Scale Matrix=\n{}'.format(self.s_mtx[:, :, 0])
+        print 'Log of Dirichlet constant=\n{}'.format(self.log_dirichlet_const)
+        print 'Log of LambdaTilde=\n{}'.format(self.log_lambda_tilde)
+        print 'Log of PiTilde=\n{}'.format(self.log_pi_tilde)
+        print 'Log of Wishart constant=\n{}'.format(self.log_wishart_const)
+        print 'Mean=\n{}'.format(self.mean)
+        print 'Wishart DOF={}'.format(self.dof)
 
 
 class VBGMM:
     """Gaussian Mixture Model with Variational Bayesian (VB) Learning"""
 
-    def __init__(self, data, K, max_iter=200, thresh=1e-5, verbose=True, alpha0=0.001, plotFn=False):
+    def __init__(self, data, K, verbose=True, alpha0=0.001, plotFn=False):
         self.data = data
         self.K = K
-        self.max_iter = max_iter
-        self.thresh = thresh
         self.verbose = verbose
         self.alpha0 = alpha0
         self.plotFn = plotFn
@@ -82,41 +134,19 @@ class VBGMM:
         """Initialize prior parameters"""
         # define a vague prior
         alpha = self.alpha0 * np.ones((1, self.K))
-        m = np.zeros((self.K, self.D))
+        m = np.zeros((self.K, self.data_dim))
         beta = 1 * np.ones((1, self.K))  # low precision for mean
         # diag is necessary to make numpy's np.tile replicate Matlab's repmat
         # https://stackoverflow.com/questions/1721802/what-is-the-equivalent-of-matlabs-repmat-in-numpy
-        diag = np.eye(self.D)
+        diag = np.eye(self.data_dim)
         diag = diag[:, :, np.newaxis]
         W = 200 * np.tile(diag, (1, 1, self.K))  # W is a D-by-D-by-K matrix
         v = 20 * np.ones((1, self.K))
-        self.prior_params = Parameters((alpha, beta, m, v, W, np.array([])))
+        self.prior_params = Estimate(alpha, beta, m, v, W, np.array([]))
+        _, _, _ = self.prior_params.get_expectations(self.data)
 
     def _init_posterior(self, Nk, xbar, S):
         self.post_params = self._m_step(Nk, xbar, S)
-
-    def _get_expectations(self):
-
-        # Bishop's equation 10.64
-        exp_mu_lambda = np.zeros((self.N, self.K))
-        for k in range(self.K):
-            x_c = self.data - self.post_params.mean[[k], :]  # subtract mean
-            exp_mu_lambda[:, [k]] = (self.data_dim / self.params.beta[:, [k]]) + \
-                                    self.post_params.dof[:, [k]] * np.sum(x_c.dot(self.post_params.s_mtx[:, :, k])
-                                                                          * x_c, axis=1, keepdims=True)
-
-        # Bishop's equation 10.65/B.81 : E[ln|Lambda_k|]
-        log_lambda_tilde = np.zeros((1, self.K))
-        for k in range(self.K):
-            log_det_s_mtx = logdet(self.post_params.s_mtx[:, :, k])
-            # Calculates Bishop's B.81 equation:
-            log_lambda_tilde[:, k] = np.sum(digamma(1 / 2 * (self.post_params.dof[:, [k]] + 1 - np.arange(1, self.D + 1))))\
-                                     + (self.D * np.log(2)) + log_det_s_mtx
-
-        # Bishop's equation 10.66 : E[ln(pi(k))]
-        log_pi_tilde = digamma(self.post_params.alpha) - digamma(np.sum(self.post_params.alpha))
-
-        return exp_mu_lambda, log_lambda_tilde, log_pi_tilde
 
     def _get_lower_bound(self):
         pass
@@ -124,10 +154,10 @@ class VBGMM:
     def _m_step(self, Nk, xbar, S):
 
         alpha = self.prior_params.alpha + Nk  # Bishop's equation 10.58
-        beta = self.prior_params.beta + Nk    # Bishop's equation 10.60
-        m = np.zeros((self.K, self.D))
+        beta = self.prior_params.beta + Nk  # Bishop's equation 10.60
+        m = np.zeros((self.K, self.data_dim))
         v = np.zeros((1, self.K))
-        invW = np.zeros((self.D, self.D, self.K))
+        invW = np.zeros((self.data_dim, self.data_dim, self.K))
 
         for k in range(self.K):
             if Nk[k] < 0.001:  # extinguished
@@ -140,15 +170,16 @@ class VBGMM:
 
                 # Bishop's equation 10.62
                 invW[:, :, k] = self.prior_params.inv_s_mtx[:, :, k] + (Nk[k] * S[:, :, k]) + (
-                            (self.prior_params.beta[:, k] * Nk[k]) / (self.prior_params.beta[:, k] + Nk[k])) * \
-                            (xbar[[k], :] - self.prior_params.mean[[k], :]).transpose().dot(xbar[[k], :] - self.prior_params.mean[[k], :])
+                        (self.prior_params.beta[:, k] * Nk[k]) / (self.prior_params.beta[:, k] + Nk[k])) * \
+                                (xbar[[k], :] - self.prior_params.mean[[k], :]).transpose().dot(
+                                    xbar[[k], :] - self.prior_params.mean[[k], :])
 
                 if np.isnan(np.sum(invW[:, :, k])):
                     print 'inverse W has NaN'
 
                 v[:, [k]] = self.prior_params.dof[:, k] + Nk[k]  # Bishop's  equation 10.63
 
-        return Parameters(alpha, beta, m, v, np.array([]), invW)
+        return Estimate(alpha, beta, m, v, np.array([]), invW)
 
     def _e_step(self):
         """
@@ -165,7 +196,7 @@ class VBGMM:
 
         """
 
-        exp_mu_lambda, log_lambda_tilde, log_pi_tilde = self._get_expectations()
+        exp_mu_lambda, log_lambda_tilde, log_pi_tilde = self.post_params.get_expectations(self.data)
 
         # Bishop's equation (10.46)
         log_rho = np.tile(log_pi_tilde + 0.5 * log_lambda_tilde, (self.N, 1)) - 0.5 * exp_mu_lambda
@@ -178,7 +209,7 @@ class VBGMM:
 
         return z, r, log_sum_rho, log_r, nk
 
-    def _compute_nk_xbar_sk(self,resp):
+    def _compute_nk_xbar_sk(self, resp):
         """
         This computes analogous quantities to the maximum likelihood EM for the Gaussian mixture model.
         In particular, it re-estimates the parameters using the current responsibilities using Bishop's
@@ -195,10 +226,10 @@ class VBGMM:
         Nk = Nk + 1e-10
 
         # responsibility weighted mean of x
-        Xbar_k = np.zeros((self.K, self.D))
+        Xbar_k = np.zeros((self.K, self.data_dim))
 
         # responsibility weighted covariance of x
-        Sk = np.zeros((self.D, self.D, self.K))
+        Sk = np.zeros((self.data_dim, self.data_dim, self.K))
 
         for k in range(self.K):
             # Bishop's equation 10.52
@@ -208,6 +239,17 @@ class VBGMM:
             Sk[:, :, k] = (XC * resp[:, [k]]).conj().transpose().dot(XC) / Nk[k]
 
         return Nk, Xbar_k, Sk
+
+    def _entropy(self):
+        entropy = np.zeros((1, self.K))
+
+        log_wishart_const = self.post_params.get_log_wishart_const()
+        # Calculates Bishop's B.82 equation: H[Lambda]
+        for k in range(self.K):
+            entropy[:, k] = - log_wishart_const[:, k] - \
+                            ((self.post_params.dof[:, [k]] - self.data_dim - 1) / 2) \
+                            * self.post_params.log_lambda_tilde[:, k] + self.post_params.dof[:, [k]] * self.data_dim / 2
+        return entropy
 
     def _get_lower_bound(self, Nk, xbar, S, rnk, logrnk):
         """
@@ -233,47 +275,38 @@ class VBGMM:
         :return:
         """
 
-        # TODO : CONTINUE HERE
-        
-        # copying postParams
+        # getting post_params
         alpha = self.post_params.alpha
         beta = self.post_params.beta
-        entropy = self.post_params.entropy
-        invW = self.post_params.invW
-        logDirConst = self.post_params.logDirConst
-        logLambdaTilde = self.post_params.logLambdaTilde
-        logPiTilde = self.post_params.logPiTilde
-        logWishartConst = self.post_params.logWishartConst
-        m = self.post_params.m
-        v = self.post_params.v
-        W = self.post_params.W
+        entropy = self._entropy()
+        logDirConst = self.post_params.get_log_dir_const()
+        logLambdaTilde = self.post_params.log_lambda_tilde
+        logPiTilde = self.post_params.log_pi_tilde
+        m = self.post_params.mean
+        v = self.post_params.dof
+        W = self.post_params.s_mtx
 
-        # copying priorParams
+        # copying prior_params
         alpha0 = self.prior_params.alpha
         beta0 = self.prior_params.beta
-        entropy0 = self.prior_params.entropy
-        invW0 = self.prior_params.invW
-        logDirConst0 = self.prior_params.logDirConst
-        logLambdaTilde0 = self.prior_params.logLambdaTilde
-        logPiTilde0 = self.prior_params.logPiTilde
-        logWishartConst0 = self.prior_params.logWishartConst
-        m0 = self.prior_params.m
-        v0 = self.prior_params.v
-        W0 = self.prior_params.W
+        invW0 = self.prior_params.inv_s_mtx
+        logDirConst0 = self.prior_params.get_log_dir_const()
+        logWishartConst0 = self.prior_params.get_log_wishart_const()
+        m0 = self.prior_params.mean
+        v0 = self.prior_params.dof
 
-        D, D2, K = W.shape
 
         # Bishop's equation 10.71
-        ElogpX = np.zeros((1, K))
-        for k in range(K):
+        ElogpX = np.zeros((1, self.K))
+        for k in range(self.K):
             xbarc = xbar[[k], :] - m[[k], :]
 
             # the reshape maintains the 1x2 for after the multiplications
             ElogpX[:, k] = 0.5 * Nk[k] \
-                           * (logLambdaTilde[:, k] - (D / beta[:, [k]])
+                           * (logLambdaTilde[:, k] - (self.data_dim / beta[:, [k]])
                               - np.trace(v[:, [k]] * S[:, :, k].dot(W[:, :, k]))
                               - v[:, [k]] * np.sum(xbarc.dot(W[:, :, k]) * xbarc, keepdims=True)
-                              - (D * np.log(2 * np.pi)))  # Bishop's equation 10.71
+                              - (self.data_dim * np.log(2 * np.pi)))  # Bishop's equation 10.71
         ElogpX = np.sum(ElogpX)
 
         # Bishop's equation 10.72
@@ -283,15 +316,15 @@ class VBGMM:
         Elogppi = logDirConst0 + np.sum((alpha0 - 1) * logPiTilde)
 
         # Bishop's equation 10.74
-        ElogpmuSigma = np.zeros((1, K))
-        for k in range(K):
+        ElogpmuSigma = np.zeros((1, self.K))
+        for k in range(self.K):
             mc = m[[k], :] - m0[[k], :]
 
-            ElogpmuSigma[:, k] = 0.5 * (D * np.log(beta0[:, k] / (2 * np.pi))
-                                        + logLambdaTilde[:, k] - ((D * beta0[:, k]) / beta[:, [k]])
+            ElogpmuSigma[:, k] = 0.5 * (self.data_dim * np.log(beta0[:, k] / (2 * np.pi))
+                                        + logLambdaTilde[:, k] - ((self.data_dim * beta0[:, k]) / beta[:, [k]])
                                         - beta0[:, k] * v[:, [k]] * np.sum(mc.dot(W[:, :, k]) * mc, keepdims=True)) \
                                  + logWishartConst0[:, k] \
-                                 + 0.5 * (v0[:, k] - D - 1) * logLambdaTilde[:, k] \
+                                 + 0.5 * (v0[:, k] - self.data_dim - 1) * logLambdaTilde[:, k] \
                                  - 0.5 * v[:, [k]] * np.trace(invW0[:, :, k].dot(W[:, :, k]))
 
         ElogpmuSigma = np.sum(ElogpmuSigma)
@@ -304,21 +337,27 @@ class VBGMM:
         Elogqpi = np.sum((alpha - 1) * logPiTilde) + logDirConst
 
         # Bishop's equation 10.77
-        ElogqmuSigma = np.sum((1 / 2) * logLambdaTilde + (D / 2) * np.log(beta / (2 * np.pi)) - (D / 2) - entropy)
+        ElogqmuSigma = np.sum((1 / 2) * logLambdaTilde + (self.data_dim / 2) *
+                              np.log(beta / (2 * np.pi)) - (self.data_dim / 2) - entropy)
 
         # Overall sum
         # Bishop's equation 10.70
         L = ElogpX + ElogpZ + Elogppi + ElogpmuSigma - ElogqZ - Elogqpi - ElogqmuSigma
 
         if np.isnan(L):
-            print "ElogpX: {}\nElogpZ: {}\nElogppi: {}\n\
-                 ElogpmuSigma: {}\nElogqZ: {}\n\
-                 Elogqpi: {}\nElogqmuSigma: {}\n".format(ElogpX, ElogpZ,
-                                                         Elogppi, ElogpmuSigma, ElogqZ, Elogqpi, ElogqmuSigma)
+            print "ElogpX:\n{}".format(ElogpX)
+            print "ElogpZ:\n{}".format(ElogpZ)
+            print "Elogppi:\n{}".format(Elogppi)
+            print "ElogpmuSigma:\n{}".format(ElogpmuSigma)
+            print "ElogqZ:\n{}".format(ElogqZ)
+            print "Elogqpi:\n{}".format(Elogqpi)
+            print "ElogqmuSigma:\n{}".format(ElogqmuSigma)
+
         return L
 
-    def fit(self):
+    def fit(self, max_iter=200, thresh=1e-5):
         self._init_prior()
+
         # Initialization -- In practice, a better initialization procedure would be to
         # choose the cluster centres mu_k to be equal to a random subset of K data points.
         # It is also worth noting that the K-means algorithm itself is often used to
@@ -331,7 +370,7 @@ class VBGMM:
         # clf.fit(X)
         # xbar = clf.means_          # centres
         # Nk = N*clf.weights_        # priors
-        S = np.zeros((self.D, self.D, self.K))  # covariances
+        S = np.zeros((self.data_dim, self.data_dim, self.K))  # covariances
         # for k in range(clf.covariances_.shape[0]):    # reshape covariances
         #     S[:, :, k] = clf.covariances_[k]
 
@@ -378,7 +417,7 @@ class VBGMM:
             Nk, xbar, S = self._compute_nk_xbar_sk(rnk)
 
             # get lower bound for iteration
-            log_lik_hist.append(lower_bound(Nk, xbar, S, rnk, log_rnk, iter_num))
+            log_lik_hist.append(self._get_lower_bound(Nk, xbar, S, rnk, log_rnk))
 
             # M-step
             self.post_params = self._m_step(Nk, xbar, S)
@@ -391,9 +430,9 @@ class VBGMM:
             if iter_num == 0:
                 converged = False
             else:
-                converged = convergence_test(log_lik_hist[iter_num], log_lik_hist[iter_num - 1], self.thresh)
+                converged = convergence_test(log_lik_hist[iter_num], log_lik_hist[iter_num - 1], thresh)
 
-            done = converged or (iter_num > self.max_iter)
+            done = converged or (iter_num > max_iter)
 
             if self.verbose:
                 print 'Iteration #{}, loglik = {}'.format(iter_num, log_lik_hist[iter_num])
@@ -401,87 +440,6 @@ class VBGMM:
             iter_num += 1
 
         return self.post_params, log_lik_hist
-
-
-
-
-class MixGaussBayesStructure:
-    """
-    Create a variational Bayes mixture of Gaussians model
-    """
-
-    def __init__(self, alpha, beta, m, v, W, invW):
-        if not invW.size:
-            D, D2, K = W.shape
-        else:
-            D, D2, K = invW.shape
-
-        # store the params
-        self.alpha = alpha  # Dirichlet vector parameter (scalar in case of symmetric prior)
-        self.beta = beta  #
-        self.m = m
-        self.v = v
-        self.W = np.zeros((D, D, K))
-        self.invW = np.zeros((D, D, K))
-
-        for k in range(K):
-            if not invW.size:
-                self.W[:, :, k] = copy.deepcopy(W[:, :, k])
-                self.invW[:, :, k] = np.linalg.inv(W[:, :, k])
-
-            if not W.size:
-                self.invW[:, :, k] = copy.deepcopy(invW[:, :, k])
-                self.W[:, :, k] = np.linalg.inv(invW[:, :, k])
-
-        # precompute various functions of the distribution for speed
-
-        # E[ln(pi(k))] 10.66
-        self.logPiTilde = digamma(alpha) - digamma(np.sum(alpha))
-
-        logdetW = np.zeros((1, K))
-
-        # E[ln(Lambda(:,:,k))]
-        self.logLambdaTilde = np.zeros((1, K))
-
-        self.logWishartConst = np.zeros((1, K))
-
-        self.entropy = np.zeros((1, K))
-
-        # B.23
-        self.logDirConst = gammaln(np.sum(alpha)) - np.sum(gammaln(alpha))
-
-        for k in range(K):
-            logdetW[:, k] = logdet(self.W[:, :, k])
-
-            # Calculates Bishop's B.81 equation: E[ln|Lambda|]
-            self.logLambdaTilde[:, k] = np.sum(digamma(1 / 2 * (v[:, [k]] + 1 - np.arange(1, D + 1)))) + \
-                                        (D * np.log(2)) + logdetW[:, k]
-
-            logB = -(v[:, k] / 2) * logdetW[:, k] - (v[:, [k]] * D / 2) * np.log(2) \
-                   - (D * (D - 1) / 4) * np.log(np.pi) - np.sum(gammaln(0.5 * (v[:, [k]] + 1 - np.arange(1, D + 1))))
-
-            # Calculates Bishop's B.79 equation: B(W, v)
-            self.logWishartConst[:, k] = -(v[:, [k]] / 2) * logdetW[:, k] - (v[:, [k]] * D / 2) * np.log(
-                2) - mvtGammaln(D, v[:, [k]] / 2)
-
-            assert (np.isclose(logB[0], self.logWishartConst[0, k], rtol=0, atol=1e-2))
-
-            # Calculates Bishop's B.82 equation: H[Lambda]
-            self.entropy[:, k] = - self.logWishartConst[:, k] - ((v[:, [k]] - D - 1) / 2) * self.logLambdaTilde[:,
-                                                                                            k] + v[:, [k]] * D / 2
-
-    def print_params(self):
-        # copying parameters
-        print 'alpha=\n{}'.format(self.alpha)
-        print 'beta=\n{}'.format(self.beta)
-        print 'entropy=\n{}'.format(self.entropy)
-        print 'invW=\n{}'.format(self.invW[:, :, 0])
-        print 'logDirConst=\n{}'.format(self.logDirConst)
-        print 'logLambdaTilde=\n{}'.format(self.logLambdaTilde)
-        print 'logPiTilde=\n{}'.format(self.logPiTilde)
-        print 'logWishartConst=\n{}'.format(self.logWishartConst)
-        print 'm=\n{}'.format(self.m)
-        print 'v={}'.format(self.v)
 
 
 def main(K=6):
@@ -499,8 +457,10 @@ def main(K=6):
     Y = normalize_data([d[1] for d in data])
     data = np.array([X, Y]).transpose()
 
+    model = VBGMM(data, K)
+
     # run mixGaussBayesFit
-    model, loglikHist = mix_gauss_bayes_fit(data, K)
+    model, loglikHist = model.fit()
 
     # plot likelihood
     plt.plot(loglikHist, '-', marker='*', lw=3)
