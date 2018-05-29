@@ -1,9 +1,9 @@
 from __future__ import division
 from sklearn.mixture import GaussianMixture
 from utils import read_csv, normalize_data, plot_data
-from optimization import convergence_test
+from vi_math.optimization import convergence_test
 from matplotlib import pyplot as plt
-from mathematics import *
+from vi_math.mathematics import *
 from scipy.special import logsumexp
 import numpy as np
 import copy
