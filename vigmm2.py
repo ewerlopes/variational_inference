@@ -365,11 +365,11 @@ class VBGMM:
         # EM algorithm. Bishop's book pag. 427.
 
         # fit a Gaussian Mixture Model with two components -- Initialization
-        # clf = GaussianMixture(n_components=K, max_iter=30, covariance_type='full', init_params='kmeans',
+        # clf = GaussianMixture(n_components=self.K, max_iter=30, covariance_type='full', init_params='kmeans',
         #                       tol=0.1, random_state=1)
-        # clf.fit(X)
+        # clf.fit(self.data)
         # xbar = clf.means_          # centres
-        # Nk = N*clf.weights_        # priors
+        # Nk = self.N*clf.weights_        # priors
         S = np.zeros((self.data_dim, self.data_dim, self.K))  # covariances
         # for k in range(clf.covariances_.shape[0]):    # reshape covariances
         #     S[:, :, k] = clf.covariances_[k]
@@ -441,6 +441,12 @@ class VBGMM:
 
         return self.post_params, log_lik_hist
 
+    def plot_posterior_alpha(self):
+        plt.bar(range(self.K), list(self.post_params.alpha[0,:]))
+        plt.title('Posterior alpha')
+        plt.xlabel('K')
+        plt.show()
+
 
 def main(K=6):
     # set seed
@@ -460,7 +466,9 @@ def main(K=6):
     model = VBGMM(data, K)
 
     # run mixGaussBayesFit
-    model, loglikHist = model.fit()
+    posterior, loglikHist = model.fit()
+
+    model.plot_posterior_alpha()
 
     # plot likelihood
     plt.plot(loglikHist, '-', marker='*', lw=3)
